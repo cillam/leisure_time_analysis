@@ -1,0 +1,206 @@
+---
+title: "Describing the Relationship between Leisure Time and Age"
+subtitle: |
+  | Datasci 203: Lab 2
+  | Github: https://github.com/mids-w203/lab-2-fordite
+author: "Alice Robinson, Carolina Gonzalez, Fan Lin, and Priscilla Miller" 
+output:
+    pdf_document: default
+geometry: "left=0.5in, right=0.5in, top=0.5in, bottom=0.25in"
+header-includes:
+  - \pagenumbering{gobble}
+  - \usepackage{titling}
+  - \setlength{\droptitle}{-1.8cm}
+---
+>
+  `\vspace{-1.6cm}`{=latex}
+
+```{r setup and load packages, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(sandwich)
+library(lmtest)
+library(ipumsr)
+library(stargazer)
+library(dplyr)
+```
+
+
+```{r loading data, message=FALSE}
+#source: https://www.ipums.org/
+#source: https://timeuse.ipums.org/
+ddi <- read_ipums_ddi('../data/raw/atus_00003.xml')
+data <- read_ipums_micro(ddi)
+names(data) <- tolower(names(data))
+```
+
+```{r data pipeline}
+data <- data %>%
+  mutate(
+    # Removing age category: Persons aged 80-84 are assigned a code of 80 and persons age 85+ are assigned a code of 85.
+    age = case_when((age >= 80) ~ NA, .default = age),
+    # Transform age variable as polynomial
+    age2 = case_match(age, NA ~ NA, .default = age*age),
+    # Create married variable
+    married = case_match(marst, 1 ~ 1, 2 ~ 0, 3 ~ 0, 4 ~ 0, 5 ~ 0, 6 ~ 0,.default = NA),
+    # Create never married variable
+    never_married = case_match(marst, 6 ~ 1, 2 ~ 0, 3 ~ 0, 4 ~ 0, 5 ~ 0, 1 ~ 0, .default = NA),
+    # Create female variable
+    female = case_match(sex, 2 ~ 1, 1 ~ 0,.default = NA),
+    children = case_match(hh_child, 99 ~ NA, .default = hh_child),
+    # Update famincome values from numbered categories to associated dollar values (in thousands)
+    family_income = case_match(famincome, 1 ~ 2.5, 2 ~ 5, 3 ~ 7.5, 4 ~ 10, 5 ~ 12.5, 6 ~ 15,
+                            7 ~ 20, 8 ~ 25, 9 ~ 30, 10 ~ 35, 11 ~ 40, 12 ~ 50, 
+                            13 ~ 60, 14 ~ 75, 15 ~ 100, 16 ~ 150, .default = NA),
+    NE_region = case_match(region, 1 ~ 1, 2 ~ 0, 3 ~ 0, 4 ~ 0, .default = NA)) %>%
+  na.omit()
+
+```
+
+## Introduction
+Leisure can contribute to a person’s sense of meaningfulness through opportunities to enhance relationships with friends and family. Leisure can also be enjoyed alone or in structured social settings with acquaintances. The essence of leisure lies less in the specific activity than in the subjective perception of freedom, choice, and intrinsic motivation.^[ Seppo E. Iso-Ahola and Roy F Baumeister. "Leisure and meaning in life." *Frontiers in Psychology*, Volume 14, 2023. https://www.frontiersin.org/journals/psychology/articles/10.3389/fpsyg.2023.1074649/full] Having leisure time means having freedom during your day to choose to participate in an activity that not only is interesting to you but also can boost happiness and life satisfaction. We were interested in learning more about leisure’s contribution to people’s lives and the time they dedicate to it. 
+
+This descriptive analysis intends to address the following research question: Does time spent participating in leisure activities vary depending on a person’s age? This study investigates the amount of leisure time experienced across generations and other demographic factors (e.g., income, gender) that may influence time spent on leisure. Significant results from this analysis may provide a view of what circumstances allow people to spend more or less time on leisure than others do.
+
+## Data
+Our data source is the Annual American Time Use Survey (ATUS) data provided by IPUMS.^[https://timeuse.ipums.org/] IPUMS offers integrated census and survey data worldwide, allowing for easy research and analysis of individuals within family and community contexts. First conducted in 2003, the ATUS is a nationally representative U.S. time diary survey that provides data on the time people spend doing over 400 activities. Participants in the ATUS are selected randomly from households completing the Current Population Survey (CPS). We use data from the 2022 survey only, which comprises `r nrow(read_ipums_micro(ddi))` records of individuals, detailing their age, leisure time activities, and other variables such as gender and income.
+
+## Conceptualization and Operationalization
+
+For this project, we operationalized "age" using the given variable age within the dataset. The variable age is measured as the respondent’s age in years as of their last birthday and available for survey participants who are aged 15 or over. However, `r nrow(read_ipums_micro(ddi)) - nrow(data)` records were removed from the dataset because individuals aged 80 and over were grouped into age categories of 80&ndash;84 and 85-plus. Removal of these observations reduced the total number of observations for analysis to `r nrow(data)`.
+
+For our Y concept, we defined leisure time as time spent by people relaxing, socializing, or enjoying the pursuit of personal interests, i.e., hobbies. Our definition of leisure time is restricted to only time when activities appear to be entirely voluntary and/or of personal interest and not obligatory or time spent fulfilling responsibilities; for instance, we excluded personal care (e.g., sleeping, grooming, exercise), religious/volunteer activities, household chores, or caretaking of children or other family members. We do note, however, that some activities such as exercise and playing or spending time with children could be deemed as leisure activities but such activities are not within the scope of our definition. 
+
+For the leisure and sports category of the ATUS survey, respondents report time spent in sports, exercise, and recreation; socializing and communicating; and other leisure activities. Within the dataset are two variables to measure leisure: act_social and act_sports. The variable act_sports measures the minutes per day each respondent reported spending in sports, exercise, and recreational activities. However, though some of the activities within act_sports could be viewed as leisure, the activities measured by the variable act_sports did not fit well with our restricted definition of leisure activities since we excluded exercise as personal care. To operationalize leisure time, we used the variable act_social, which measures the minutes spent daily by respondents on leisure activities, including socializing (e.g., attending parties, chatting with friends), partaking in hobbies, relaxing, playing passive (nonphysical) games (excluding games played with children only), watching TV, listening to music, and reading or writing for personal interest.
+
+## Modeling Decisions
+
+```{r models}
+mod_s <- lm(act_social~ 1,data=data)
+mod_1 <- lm(act_social~ age,data=data)
+mod_2 <- lm(act_social~ age +age2,data=data)
+mod_3 <- lm(act_social~ age +age2+female,data=data)
+mod_4 <- lm(act_social~ age +age2+female+children,data=data)
+mod_5 <- lm(act_social~ age +age2+female+children+ family_income, data=data)
+mod_6 <- lm(act_social~ married, data=data)
+mod_7 <- lm(act_social~ age +age2+female+children+ family_income+married, data=data)
+mod_8 <- lm(act_social~ NE_region, data=data)
+mod_9 <- lm(act_social~ age +age2+female+children+ family_income+married+NE_region, data=data)
+
+
+
+m1_r2 = round(summary(mod_1)$adj.r.squared, 4)
+m2_r2 = round(summary(mod_2)$adj.r.squared, 4)
+m3_r2 = round(summary(mod_3)$adj.r.squared, 4)
+m4_r2 = round(summary(mod_4)$adj.r.squared, 4)
+m5_r2 = round(summary(mod_5)$adj.r.squared, 4)
+m6_r2 = round(summary(mod_6)$adj.r.squared, 4)
+m7_r2 = round(summary(mod_7)$adj.r.squared, 4)
+m8_r2 = round(summary(mod_8)$adj.r.squared, 4)
+m9_r2 = round(summary(mod_9)$adj.r.squared, 4)
+
+```
+
+### Transformations
+
+Based on the following graph, it appears that the relationship between leisure time and age is slightly curved; the average leisure time decreases as age increases from age 16 to age 35 and increases after age 40. To better model the curvature in these data, we decided to model age as a two-degree polynomial.
+
+```{r leisure time vs age visual, message = FALSE, out.width="60%"}
+ggplot( data, aes(x = age, y = act_social)) +
+  geom_point()+ geom_smooth()  +
+  labs(
+    title = "Leisure Time versus Age",
+    y= "minutes per day",
+    x= "age"
+  )   
+```
+
+### Covariates
+
+To select covariates, we hypothesized that people enrolled in school [schlcoll] and people with children under 18 [hh_child] had less leisure time. The time people spend on various activities, including leisure, is significantly influenced by their life stages, such as whether they are in school, employed, or have childcare responsibilities. For instance, millennials, who are more likely to be enrolled in school and have younger children, tend to spend more time on educational activities and childcare. Consequently, they have less leisure time compared to nonmillennials, reflecting the balancing act of managing education, employment, and family responsibilities.^[ Michelle Freeman, "Time use of millennials and nonmillennials," *Monthly Labor Review*, U.S. Bureau of Labor Statistics, October 2019, https://doi.org/10.21916/mlr.2019.22] We also hypothesized that people living in different parts [region] of the U.S. may have different levels of leisure time due to cultural and historical reasons. Historically, labor movements in the U.S., particularly in the Northeast, have fought for shorter working hours, aiming to increase leisure time.^[ "Expansion of Leisure Time". Encyclopedia of Recreation and Leisure in America. Encyclopedia.com. Retrieved March 18, 2024. https://www.encyclopedia.com/humanities/encyclopedias-almanacs-transcripts-and-maps/expansion-leisure-time] We also wanted to consider the effect that household income [famincome] has on a person's leisure time since we also believed that higher incomes may have the ability to spend more time and money on leisure. Marital status [marst] and gender [sex] were also studied as potential covariates based on previous research on the gender gap in leisure time among employed, married adults.^[Carolina Aragão. "Working husbands in U.S. have more leisure time than working wives do, especially among those with children". *Pew Research Center*. https://pewrsr.ch/3sa2DXa]
+
+Following an exploratory analysis, we decided to focus our model on a set of more impactful variables and chose to exclude three covariates:^[See appendix for Stargazer chart incuding these covariates.] 
+
+* Marital status - When including number of children as a covariate, marital status was not statistically important.
+
+* Location - Based on a regression model that takes the Northeast as baseline, we observed significant positive coefficients for the Midwest and South. However, the effect size was small (~6% higher than the baseline) compared to other candidate variables that our team analyzed.  
+
+* Enrollment - Based on a regression model that takes unenrolled as baseline, we observed significant positive coefficients for high school part-time and high school full-time enrollment. However, the number of samples are relatively small for those categories. We have `r length(which(data$schlcoll == 02))` and `r length(which(data$schlcoll == 03))` samples for part-time and full-time enrollment, respectively, less than the 200 required for a large sample regression analysis. Other categories such as college/university enrollment had large enough sample sizes but did not have significant coefficients during our preliminary exploration.
+
+### Assumptions
+
+Since all variables in our model have more than 200 samples, we evaluated the two assumptions for the large sample model:
+
+1. IID - IPUMS samples are described as cluster samples,^[ "Sampling Errors". IPUMS USA. https://usa.ipums.org/usa/chapter3/chapter3.shtml] meaning that the sampling units (households or dwellings) are groups of individuals. However, for ATUS, only one eligible person from each household is selected to participate in the survey as the household designated person, and all eligible persons within a sample household have the same probability of being selected as the ATUS designated person. Further, the ATUS sample is drawn from the CPS sample, which consists of independent samples in each state, tailored to its demographic and labor market conditions.^["Sampling". U.S. Census Bureau. Census.gov. https://www.census.gov/programs-surveys/cps/technical-documentation/methodology/sampling.html] 
+
+1. Unique BLP exists - The assumption for the existence of a unique BLP should hold since we did not observe any infinite variance or perfect collinearity based on the histogram of variables or correlation matrix, respectively.
+
+## Results
+
+```{r mylatextable, results = "asis", warning = FALSE}
+stargazer(mod_2, mod_3, mod_4, mod_5, type = "latex", keep.stat=c("n"),
+          dep.var.labels = "Leisure Time",
+          covariate.labels = c("Age","Age-squared", "Female", "Children","Family Income"),
+          title = "Regression Results", style = "default", header = FALSE,
+          float = TRUE, no.space = TRUE, font.size = "small",
+          add.lines = list(c("Fixed effects?", "Yes", "Yes","Yes","Yes"),
+                           c("Sex","No", "Yes", "Yes","Yes"),
+                           c("Children","No", "No","Yes","Yes"),
+                           c("Family Income","No", "No", "No", "Yes"),
+                           c("Adjusted R Squared", m2_r2, m3_r2, m4_r2, m5_r2)),
+          star.cutoffs = c(.05, .01, NA),
+          notes.append = FALSE,
+          notes = "*$p<0.05$; **$p<0.01$")
+
+```
+
+There is large variance in an individual’s leisure time, and the final model explains only `r scales::percent(summary(mod_5)$adj.r.squared, accuracy = 0.1)` of the variance. However, the low R-squared is not unexpected considering that leisure time may inherently have a greater amount of unexplainable variation since the interpretation of leisure time may vary by individual and the features in our model represent only a few determinants of how people spend their time. Since the coefficients in each model are statistically significant (p-value < 0.01), we can still draw conclusions about the relationships between leisure time and the independent variables. The coefficient for age^2^ indicates a positive relationship whereas the coefficients for age, sex, having children, and family income indicate the opposite.
+
+We evaluated practical significance in two ways: 
+
+1. Compared to the standard deviation of leisure time (217 minutes) - None of the features are practically significant.
+
+1. Subjectively for an individual (30 minutes) since a gain or loss of 30 minutes may significantly contribute to a person's day depending on their circumstances - Age is practically significant to leisure time. Instead of a linear relationship, it is better described as a second-degree polynomial with an inflection point (minimum) at age 38. The first 10 years away from the inflection point gain `r scales::number(summary(mod_5)$coefficients["age2", "Estimate"]*100, accuracy=1)` minutes of leisure time, and the second 10 years away gain an additional `r scales::number(summary(mod_5)$coefficients["age2", "Estimate"]*300, accuracy=1)` minutes. At age 79, the model estimates `r scales::number((summary(mod_5)$coefficients["age2", "Estimate"]*1700)/60, accuracy=1)` additional hours of leisure time than at age 38. The covariates sex, raising children under the age 18, and family income are also practically significant to leisure time in terms of an individual's perception. Being female decreases leisure time by `r scales::number(summary(mod_5)$coefficients["female", "Estimate"]*-1, accuracy=1)` minutes, and having children decreases leisure time by `r scales::number(summary(mod_5)$coefficients["children", "Estimate"]*-1, accuracy=1)` minutes. As for the last covariate, the 10th percentile of family income has 77 minutes more leisure time than the 90th percentile.
+
+Considering the practical significance to an individual, this analysis reveals the changes in a person's amount of leisure time based on age, gender, raising children, and family income: leisure time increases with age after age 38, women spend less time on leisure than men, people with children have less leisure time than those who do not, and leisure time decreases as household income increases.
+
+We believe that the insights gained from this study can give people a view into how a person's life stage and age influences the activities that occupy their time and help them evaluate the time they have to devote to leisure.
+
+\newpage
+
+## Appendix
+
+```{r}
+
+data <- data %>%
+  mutate(
+    full_time_college = case_match(schlcoll, 1 ~ 0, 2 ~ 0, 3 ~ 0, 4 ~ 0, 5 ~ 1, .default = NA)) %>%
+  na.omit()
+
+mod_10 <- lm(act_social~ full_time_college, data=data)
+m10_r2 = round(summary(mod_10)$adj.r.squared, 4)
+mod_11 <- lm(act_social~ age + age2 + female + children + family_income + married + NE_region + full_time_college, data=data)
+m11_r2 = round(summary(mod_11)$adj.r.squared, 4)
+
+```
+
+
+```{r appendixtable, results = "asis", warning = FALSE}
+stargazer(mod_5, mod_6, mod_7, mod_8, mod_9, mod_10, mod_11, type = "latex", keep.stat=c("n"),
+          title = "Regression Results (including all covariates)", style = "default", header = FALSE,
+          dep.var.labels = "Leisure Time",
+          covariate.labels = c("Age", "Age-squared", "Female", "Children","Family Income", "Married", "Northeast Region", "Full-time College"),
+          float = TRUE, no.space = TRUE, font.size = "small",
+          add.lines = list(c("Fixed effects?", "Yes", "Yes", "Yes","Yes","Yes", "No", "Yes"),
+                           c("Sex","Yes", "No","Yes", "No","Yes", "No", "Yes"),
+                           c("Children","Yes", "No","Yes", "No","Yes", "No", "Yes"),
+                           c("Family Income","Yes", "No","Yes", "No","Yes", "No", "Yes"),
+                           c("Married","No","Yes", "No", "No", "No","No", "No"),
+                           c("Northeast Region","No", "No","No", "Yes", "Yes", "No", "No"),
+                           c("Full-time College","No","No", "No", "No","No","No", "Yes"),
+                           c("Adjusted R Squared", m5_r2, m6_r2, m7_r2, m8_r2, m9_r2, m10_r2, m11_r2)),
+          star.cutoffs = c(.05, .01, NA),
+          notes.append = FALSE,
+          notes = "*$p<0.05$; **$p<0.01$")
+```
+
